@@ -116,14 +116,15 @@ tokentaby is a Claude Code plugin and CLI that records every turn in a repositor
 - **What people ask for:** a prompt log with configurable redaction, plus prompts per task and per model.
 - **Agent overhead:** main agent vs subagent spend, per agent type and per session.
 - **Task economics:** cost per task, branch or PR, cheapest vs priciest.
-- **Every agent in one place:** Codex, OpenCode, Gemini CLI, Qwen Code, Copilot CLI, Kimi Code, Hermes and Cursor usage next to Claude Code's, with a tool filter and a cost-by-tool view.
+- **Every agent in one place:** Codex, OpenCode, Gemini CLI, Qwen Code, Copilot CLI, Kimi Code, Hermes, Antigravity and Cursor usage next to Claude Code's, with a tool filter and a cost-by-tool view.
 - **Ask Claude:** "what did TKT-142 cost?" works in any session.
 
 ## Requirements
 
-- Claude Code **2.1.271 or newer** (tested on 2.1.307)
-- **Node.js 18+** on your `PATH` (the hooks are dependency-free Node scripts that run on macOS, Linux and Windows)
 - **git** — the repo you track must be a git repository
+- **Node.js 18+** on your `PATH` (everything is dependency-free Node: hooks and CLI run on macOS, Linux and Windows)
+- For Claude Code tracking: Claude Code **2.1.271 or newer** (tested on 2.1.307). Not needed if you only track [other agents](#other-coding-agents).
+- For the tools that keep their sessions in SQLite (OpenCode, GitHub Copilot CLI, Hermes Agent, Antigravity): **Node 22.5+**, or the `sqlite3` command (preinstalled on macOS)
 
 ---
 
@@ -139,6 +140,16 @@ npm install -g tokentaby
 ```
 
 Then, inside Claude Code in the repo you want to track, run `/tokentaby:init` and `/tokentaby:backfill`, and commit `.tokentaby/`. See the numbers with `/tokentaby:usage`, or `tokentaby summary` in a terminal.
+
+**Using Codex, OpenCode, Gemini CLI, Antigravity or another agent instead (or as well)?** The npm CLI is all you need:
+
+```bash
+npm install -g tokentaby
+cd your-repo && tokentaby init --dev <your-id>   # once per clone
+tokentaby import --dry-run                       # what it found from other agents
+```
+
+From then on, every commit picks up their new sessions. See [Other coding agents](#other-coding-agents).
 
 ---
 
@@ -559,14 +570,17 @@ Global:  --repo PATH --json
 ## How it works
 
 ```
-Claude Code session
-  │ hooks: SessionStart, UserPromptSubmit, Stop, SubagentStart/Stop,
-  │        TaskCreated/Completed, PostModelSwitch, PreCompact, SessionEnd
-  ▼
-hooks/collect.js  (Node, no dependencies, always exits 0, async where possible)
-  │ reads the session transcript since its watermark, dedupes on message.id,
-  │ sums usage per model, prices each request
-  ▼
+Claude Code session                         Codex · OpenCode · Gemini CLI · Qwen Code
+  │ hooks: SessionStart, UserPromptSubmit,   Copilot CLI · Kimi Code · Hermes · Antigravity
+  │ Stop, SubagentStart/Stop, TaskCreated/     │ their own local session logs
+  │ Completed, PostModelSwitch, PreCompact,    ▼
+  │ SessionEnd                               lib/importer.js + lib/sources/<tool>.js
+  ▼                                            │ sessions whose working directory is in this
+hooks/collect.js  (Node, no dependencies,      │ repo, read since their watermark, priced per
+  │ always exits 0, async where possible)      │ request, tagged with `tool`; runs on commit,
+  │ reads the transcript since its watermark,  │ sync, summary, serve and Claude session end
+  │ dedupes on message.id, prices each request │
+  ▼                                            ▼
 .git/tokentaby/spool.ndjson   (clone-local queue)
   │ pre-commit (ride-along) │ session end (auto-commit) │ /tokentaby:sync (manual)
   ▼
@@ -585,7 +599,11 @@ Each event is one JSON line:
 {"v":1,"t":"prompt","ts":"…","dev":"sami","session":"a1b2…","task":"TKT-142","hash":"3f2a…","chars":214,"text":"add retry to the webhook handler"}
 {"v":1,"t":"task","ts":"…","dev":"sami","session":"a1b2…","task":"TKT-142","status":"set","title":null}
 {"v":1,"t":"session","ts":"…","dev":"sami","session":"a1b2…","event":"start","source":"startup","cwd_rel":".","branch":"main","model":"claude-opus-5-5"}
+{"v":1,"t":"turn","ts":"…","dev":"sami","session":"019f…","tool":"codex-cli","agent":"main","agent_type":null,"model":"gpt-5.5",
+ "in":20000,"out":2000,"cw":0,"cr":30000,"usd":0.175,"task":"TKT-150","branch":"feat/TKT-150-router","dur_ms":0,"req":1}
 ```
+
+Events without a `tool` are Claude Code's. Other tools use `codex-app`, `codex-cli`, `opencode`, `gemini-cli`, `qwen-code`, `copilot-cli`, `kimi-code`, `hermes-agent`, `antigravity` and `cursor`.
 
 Details that keep the numbers right:
 
@@ -594,6 +612,7 @@ Details that keep the numbers right:
 - Watermarks (in the plugin's data dir) make every hook idempotent. A per-transcript lock stops concurrent hooks from double counting.
 - History that a resumed or forked session was seeded with is skipped.
 - `<synthetic>` placeholder messages (no API call) are ignored.
+- Other agents: each tool's numbers are normalised to the same four buckets. OpenAI and Gemini count cached tokens inside input, so they are split out; Codex's running totals become per-request deltas; Gemini CLI's re-appended messages and rewinds are resolved; Kimi Code's replayed records and Antigravity's retried responses count once.
 
 ---
 
@@ -605,6 +624,9 @@ Details that keep the numbers right:
 | Usage never reaches git | `/tokentaby:status` shows `pre_commit_hook`. With husky or another `core.hooksPath`, re-run `/tokentaby:init --hook-in-tracked-dir` or add the block yourself. Or switch to `auto-commit`. |
 | A teammate is missing | `git pull`. Their usage arrives with their commits. |
 | Commit refused for a secret | Edit the named line (replace the value with `[REDACTED]`), re-stage and commit. |
+| Another agent's usage is missing | `tokentaby tools` shows which agents were found; `tokentaby import --dry-run` which of their sessions belong to this repo. A session counts only if its working directory is inside the repo. OpenCode, Copilot CLI, Hermes and Antigravity need Node 22.5+ or the `sqlite3` command. |
+| Antigravity: old conversations missing | Conversations from builds before October 2026 are encrypted on disk. Their tokens are read from the running app: run `tokentaby import` while Antigravity is open (`node <plugin>/lib/sources/antigravity-rpc.js --debug` shows what it finds). New conversations are read straight from disk. |
+| `/tokentaby:backfill` says to choose a developer id although you did | Fixed after 0.1.3: update the plugin (`claude plugin update tokentaby`). Meanwhile `tokentaby backfill` in a terminal works. |
 | Debugging hooks | Start Claude Code with `TOKENTABY_DEBUG=1`. Payloads and errors go to `debug.ndjson` in the plugin data dir (`/tokentaby:status` shows it). |
 
 ---
