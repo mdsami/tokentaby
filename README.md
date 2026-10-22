@@ -2,15 +2,17 @@
 
 [![npm](https://img.shields.io/npm/v/tokentaby.svg)](https://www.npmjs.com/package/tokentaby) [![license](https://img.shields.io/npm/l/tokentaby.svg)](LICENSE)
 
-**Claude Code usage tracking for teams: per repo, per developer, committed to git.**
+**AI coding agent usage tracking for teams: per repo, per developer, committed to git.**
+Claude Code, Codex App & CLI, OpenCode, Gemini CLI, Qwen Code, GitHub Copilot CLI, Kimi Code, Hermes Agent, Antigravity and Cursor in one dashboard.
 
-tokentaby is a Claude Code plugin that records every turn in a repository: tokens, model, main agent or subagent, task, branch, prompt and estimated cost. The data is stored as plain NDJSON inside the repo, so `git pull` gives every clone the whole team's numbers. It needs no server and no setup beyond installing the plugin. A local dashboard and a `/tokentaby:usage` command show the totals.
+tokentaby is a Claude Code plugin and CLI that records every turn in a repository: tokens, model, main agent or subagent, task, branch, prompt and estimated cost. It also imports the sessions your team runs in [other coding agents](#other-coding-agents) in the same repo. The data is stored as plain NDJSON inside the repo, so `git pull` gives every clone the whole team's numbers. It needs no server and no setup beyond installing the plugin. A local dashboard and a `/tokentaby:usage` command show the totals.
 
-> **Costs are estimates.** Teams on Claude Pro / Max / Team subscriptions don't pay per token. tokentaby prices tokens at Anthropic's API list prices ("API-equivalent") for comparison and budgeting, never as a bill.
+> **Costs are estimates.** Teams on Claude Pro / Max / Team subscriptions (or ChatGPT, Gemini, Copilot plans) don't pay per token. tokentaby prices tokens at each vendor's API list prices ("API-equivalent") for comparison and budgeting, never as a bill.
 
 <p align="center">
   <a href="#-screenshots"><strong>Screenshots</strong></a> ·
   <a href="#quick-start"><strong>Quick start</strong></a> ·
+  <a href="#other-coding-agents"><strong>Other agents</strong></a> ·
   <a href="#the-dashboard"><strong>Dashboard</strong></a> ·
   <a href="#how-syncing-works-and-how-the-team-sees-it"><strong>Team sync</strong></a> ·
   <a href="#privacy"><strong>Privacy</strong></a>
@@ -114,6 +116,7 @@ tokentaby is a Claude Code plugin that records every turn in a repository: token
 - **What people ask for:** a prompt log with configurable redaction, plus prompts per task and per model.
 - **Agent overhead:** main agent vs subagent spend, per agent type and per session.
 - **Task economics:** cost per task, branch or PR, cheapest vs priciest.
+- **Every agent in one place:** Codex, OpenCode, Gemini CLI, Qwen Code, Copilot CLI, Kimi Code, Hermes and Cursor usage next to Claude Code's, with a tool filter and a cost-by-tool view.
 - **Ask Claude:** "what did TKT-142 cost?" works in any session.
 
 ## Requirements
@@ -304,6 +307,59 @@ Queued, not yet committed: 12 events · sync: ride-along · prompts: truncated
 
 ---
 
+## Other coding agents
+
+Developers rarely use just one agent. tokentaby reads the session logs other coding agents keep on your machine, keeps the sessions that ran **inside this repo** (their working directory is in it), and logs them like Claude Code turns: same files, same dashboard, tagged with the tool. Nothing is sent anywhere; the logs never leave your machine except as the `.tokentaby/` lines you commit.
+
+| Tool | What tokentaby reads | Tokens | Prompts |
+|---|---|---|---|
+| **Claude Code** | live, through the plugin's hooks | ✅ per request | ✅ |
+| **Codex App** and **Codex CLI** | `~/.codex/sessions/**/rollout-*.jsonl` (`$CODEX_HOME`) | ✅ per request | ✅ |
+| **OpenCode** | `~/.local/share/opencode/opencode.db` (older versions: `storage/`) | ✅ per message, incl. subagents | ✅ |
+| **Gemini CLI** | `~/.gemini/tmp/<project>/chats/*.jsonl` (`$GEMINI_CLI_HOME`) | ✅ per request | ✅ |
+| **Qwen Code** | `~/.qwen/projects/<project>/chats/*.jsonl` (`$QWEN_HOME`) | ✅ per request | ✅ |
+| **GitHub Copilot CLI** | `~/.copilot/session-store.db` (`$COPILOT_HOME`, CLI 1.0.8x or newer) | ✅ per request | ✅ when `session-state/` has them |
+| **Kimi Code** | `~/.kimi-code/sessions/**/wire.jsonl` | ✅ per step | ✅ |
+| **Hermes Agent** | `~/.hermes/state.db` (`$HERMES_HOME`) | ✅ per import (Hermes keeps running totals) | — |
+| **Cursor** | the usage CSV from cursor.com/dashboard (`--cursor-csv`) | ✅ per request, logged per day | — |
+| **Antigravity** (app and `agy` CLI) | `~/.gemini/antigravity{,-ide,-cli}/conversations/*.db`; conversations from older builds (encrypted `.pb`) through the running app | ✅ per model call | — |
+| Grok Build CLI, Muse | — on-disk usage format not verified yet | planned | — |
+
+**It runs by itself.** Every time you commit (ride-along sync), run `tokentaby sync`, `summary` or `serve`, or end a Claude Code session, tokentaby imports whatever the other tools logged in this repo since last time. Watermarks make it safe to run any number of times: nothing is counted twice.
+
+**Not using Claude Code?** You only need the CLI:
+
+```bash
+npm install -g tokentaby
+cd your-repo
+tokentaby init --dev your-name      # once per clone: .tokentaby/ + the git hook
+tokentaby tools                     # which agents tokentaby finds on this machine
+tokentaby import --dry-run          # which of their sessions belong to this repo
+git commit …                        # usage from Codex, OpenCode, … rides along
+```
+
+**Commands:**
+
+```bash
+tokentaby import                          # everything new, from every tool
+tokentaby import --tool codex,opencode    # only some tools (codex, codex-app, codex-cli, opencode, gemini, qwen, copilot, kimi, hermes, antigravity)
+tokentaby import --since 2026-10-01       # skip older sessions
+tokentaby import --cursor-csv usage.csv   # a Cursor usage export (cursor.com/dashboard → Usage → Export)
+tokentaby summary --tool codex-cli        # any view, one tool
+```
+
+**What to know:**
+
+- **Repo matching** uses each session's working directory. Sessions started in a parent folder or another clone are not this repo's and are skipped.
+- **Tasks:** a session's git branch (Codex, Qwen, Copilot, Hermes record it) gives the ticket id, like `feat/TKT-142-…` does for Claude Code. For tools that don't record the branch, recent sessions use the branch checked out now and older ones get no task.
+- **Prices** for OpenAI, Gemini, Kimi, Qwen and Grok models are in the default pricing table (official list prices, read 2026-10-22). A model that isn't there shows up as "not costed" in the dashboard. Add it under Settings → Pricing.
+- **Cursor** has no per-repo information in its export, so everything in an imported CSV counts toward the repo you import it into. Its local files carry no reliable token counts, which is why the export is needed.
+- **Antigravity**: current builds store each conversation as a plain SQLite file, read directly. Conversations made with older builds were saved encrypted (`.pb`); for those, token counts come from the running app (tokentaby finds its local server with `ps`/`lsof` on macOS and Linux and calls only read-only usage endpoints), so they are picked up the next time an import runs while Antigravity is open.
+- **Hermes Agent** keeps running totals per session and model, not per request, so each import logs the growth since the last one.
+- To switch the automatic import off for a run, set `TOKENTABY_NO_IMPORT=1`.
+
+---
+
 ## The dashboard
 
 ```bash
@@ -330,7 +386,7 @@ A single-file local web app with no build step and no CDN, so it works offline. 
 | **Prompts** | searchable log grouped by session (respects the prompt mode) |
 | **Settings** | pricing-table editor, developer names, CSV/JSON export |
 
-Filters (date range, developer, model, logged vs current prices, currency) apply to every chart and table. Every chart has a **Show data table** button that puts its values in a table underneath, and every table sorts by any column. Light and dark themes are included.
+Filters (date range, developer, tool, model, logged vs current prices, currency) apply to every chart and table. With more than one tool in the data, the Overview adds a **By tool** card. Every chart has a **Show data table** button that puts its values in a table underneath, and every table sorts by any column. Light and dark themes are included.
 
 **Currencies:** estimates are computed in USD and can be shown in **USD (default), INR or EUR**, the currencies Claude bills subscriptions in. Rates live in the `fx` table of `.tokentaby/pricing.json`, and the team can update them.
 
@@ -480,7 +536,9 @@ Install it with `npm install -g tokentaby` and run `tokentaby <command>`, or use
 ```
 summary                     today / week / month, you vs team (default)
 serve [--port N] [--detach] [--stop] [--no-open]
-init [--sync MODE] [--prompt-mode MODE] [--ci] [--hook-in-tracked-dir]
+init [--dev ID] [--sync MODE] [--prompt-mode MODE] [--ci] [--hook-in-tracked-dir]
+import [--tool ID,…] [--since YYYY-MM-DD] [--dry-run] | import --cursor-csv FILE
+tools                       which coding agents are on this machine
 task <ID> | task none
 sync | status
 query <view> [filters]      JSON: summary periods devs dev <id> models agents tasks prompts events
@@ -491,7 +549,7 @@ ingest-otel <file> [--dev ID] [--all-sessions] [--dry-run]
 backfill [--source PATH] [--project-dir DIR] [--since YYYY-MM-DD] [--dry-run]
 snapshot [--out FILE] [--no-prompts]
 
-Filters: --from YYYY-MM-DD --to YYYY-MM-DD --dev ID --model ID --task ID
+Filters: --from YYYY-MM-DD --to YYYY-MM-DD --dev ID --tool ID --model ID --task ID
          --agent TYPE --branch NAME --q TEXT --prices current
 Global:  --repo PATH --json
 ```

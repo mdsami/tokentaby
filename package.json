@@ -1,7 +1,7 @@
 {
   "name": "tokentaby",
   "version": "0.1.3",
-  "description": "Claude Code usage tracking per repo and developer: tokens, models, agents, tasks and estimated cost, committed to git, with a local team dashboard. Claude Code plugin + CLI.",
+  "description": "AI coding agent usage tracking per repo and developer — Claude Code, Codex, OpenCode, Gemini CLI, Qwen Code, Copilot CLI, Kimi Code, Hermes, Cursor: tokens, models, tasks and estimated cost, committed to git, with a local team dashboard. Claude Code plugin + CLI.",
   "license": "MIT",
   "author": "mdsami",
   "homepage": "https://github.com/mdsami/tokentaby#readme",
@@ -20,7 +20,14 @@
     "cost",
     "analytics",
     "team",
-    "dashboard"
+    "dashboard",
+    "codex",
+    "opencode",
+    "gemini-cli",
+    "qwen-code",
+    "copilot-cli",
+    "kimi",
+    "cursor"
   ],
   "bin": {
     "tokentaby": "scripts/tokentaby.js"

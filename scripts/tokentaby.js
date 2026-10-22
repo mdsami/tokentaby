@@ -18,11 +18,14 @@ const { exportFile, EXPORT_COLUMNS } = require('../lib/api');
 const { backfill } = require('../lib/backfill');
 const { buildSnapshot } = require('../lib/snapshot');
 const otel = require('../lib/otel');
+const importer = require('../lib/importer');
+const { toolName } = require('../lib/tools');
 
 const ROOT = path.resolve(__dirname, '..');
 const VERSION = store.readJson(path.join(ROOT, '.claude-plugin', 'plugin.json'), {}).version || '0.0.0';
 
-const HELP = `tokentaby ${VERSION} — Claude Code usage per repo, per developer
+const HELP = `tokentaby ${VERSION} — AI coding agent usage per repo, per developer
+Claude Code, Codex App/CLI, OpenCode, Gemini CLI, Qwen Code, GitHub Copilot CLI.
 Costs are API-equivalent ESTIMATES (the team is on subscriptions), not bills.
 
 Usage: tokentaby <command> [options]
@@ -30,8 +33,16 @@ Usage: tokentaby <command> [options]
   summary                     today / this week / this month, you vs team (default)
   serve [--port N] [--detach] [--stop] [--no-open]
                               local dashboard on http://localhost:7331
-  init [--sync MODE] [--prompt-mode MODE] [--ci] [--hook-in-tracked-dir]
+  init [--dev ID] [--sync MODE] [--prompt-mode MODE] [--ci] [--hook-in-tracked-dir]
                               set up .tokentaby/ in this repo and the git hook
+                              (--dev: your developer id when you don't use Claude Code)
+  import [--tool ID,…] [--since YYYY-MM-DD] [--dry-run]
+                              import this repo's sessions from Codex, OpenCode,
+                              Gemini CLI, Qwen Code, Copilot CLI (also runs
+                              automatically on commit, sync, summary and serve)
+  import --cursor-csv FILE    import a Cursor dashboard usage export (all of it
+                              counts toward this repo)
+  tools                       which coding agents tokentaby finds on this machine
   task <ID> | task none       attribute usage on this branch to a task
   sync                        commit your queued usage now (manual/auto-commit modes)
   status                      what is tracked, queued and configured in this clone
@@ -54,7 +65,7 @@ Usage: tokentaby <command> [options]
   precommit                   git pre-commit hook entry (installed by init)
 
 Options:  --repo PATH  --json  --data-dir DIR (plugin data folder; the slash commands pass it)
-Filters:  --from YYYY-MM-DD --to YYYY-MM-DD --dev ID --model ID --task ID
+Filters:  --from YYYY-MM-DD --to YYYY-MM-DD --dev ID --tool ID --model ID --task ID
           --agent TYPE --branch NAME --q TEXT --prices current
 Modes:    --sync ${SYNC_MODES.join('|')}   --prompt-mode ${PROMPT_MODES.join('|')}
 `;
@@ -82,11 +93,11 @@ function parseArgs(argv) {
   return out;
 }
 
-const VALUE_FLAGS = new Set(['repo', 'port', 'from', 'to', 'dev', 'model', 'task', 'agent', 'branch', 'q', 'prices', 'sync', 'promptMode', 'kind', 'format', 'out', 'before', 'base', 'head', 'limit', 'dataDir', 'source', 'projectDir', 'since', 'report']);
+const VALUE_FLAGS = new Set(['repo', 'port', 'from', 'to', 'dev', 'tool', 'model', 'task', 'agent', 'branch', 'q', 'prices', 'sync', 'promptMode', 'kind', 'format', 'out', 'before', 'base', 'head', 'limit', 'dataDir', 'source', 'projectDir', 'since', 'report', 'cursorCsv']);
 
 function filters(a) {
   const f = {};
-  for (const k of ['from', 'to', 'dev', 'model', 'task', 'agent', 'branch', 'q']) if (typeof a[k] === 'string') f[k] = a[k];
+  for (const k of ['from', 'to', 'dev', 'tool', 'model', 'task', 'agent', 'branch', 'q']) if (typeof a[k] === 'string') f[k] = a[k];
   if (a.prices === 'current') f.reprice = true;
   if (a.limit) f.limit = parseInt(a.limit, 10);
   return f;
@@ -179,6 +190,7 @@ const commands = {
 
   summary(a) {
     const repo = needRepo(a);
+    if (!a.noImport) importer.autoImport(repo, { keepDataDir: true });
     const { ds, cfg } = dataset(repo);
     const p = ds.periods(filters(a));
     if (a.json) return print(p);
@@ -198,14 +210,16 @@ const commands = {
       table(rows),
       '',
       `Top model this month: ${p.month.topModel || '—'}` + (topTask ? `   Top task: ${topTask.task} (${money(topTask.usd)})` : ''),
+      s.byTool.length > 1 ? `By tool: ${s.byTool.map((t) => `${toolName(t.tool)} ${money(t.usd)}`).join(' · ')}` : null,
       `Queued, not yet committed: ${queuedCount(repo)} events · sync: ${cfg.sync} · prompts: ${cfg.prompt_mode}`,
       p.me ? 'Dashboard: /tokentaby:dashboard  (or tokentaby serve in a terminal)' : 'Your own usage is not logged until you choose a developer id: set dev_id in /plugin → tokentaby.',
     ];
-    process.stdout.write(lines.join('\n') + '\n');
+    process.stdout.write(lines.filter((l) => l !== null).join('\n') + '\n');
   },
 
   async serve(a) {
     const repo = needRepo(a);
+    if (!a.noImport && !a.stop) importer.autoImport(repo, { keepDataDir: true });
     const { cfg } = dataset(repo);
     const port = parseInt(a.port, 10) || cfg.port;
     const pidFile = path.join(store.localDir(repo), 'serve.json');
@@ -264,8 +278,9 @@ const commands = {
     if (a.promptMode && !PROMPT_MODES.includes(a.promptMode)) throw new UsageError(`--prompt-mode must be one of ${PROMPT_MODES.join(', ')}`);
     const res = sync.init(repo, { sync: a.sync, promptMode: a.promptMode, ci: !!a.ci, allowTrackedHook: !!a.hookInTrackedDir });
     const state = store.readState(repo);
-    const dev = store.devIdFor(resolveConfig(repo.root, state.options), state);
-    store.writeState(repo, { ...(dev ? { dev } : {}), plugin_root: ROOT, version: VERSION });
+    const dev = typeof a.dev === 'string' && a.dev.trim() ? store.sanitizeDev(a.dev) : store.devIdFor(resolveConfig(repo.root, state.options), state);
+    // the git hook imports other tools' usage outside any Claude session: point it at the same watermarks
+    store.writeState(repo, { ...(dev ? { dev } : {}), plugin_root: ROOT, version: VERSION, ...(state.data_dir && !a.dataDir ? {} : { data_dir: store.dataDir() }) });
     if (a.json) return print(res);
     const hookMsg = {
       created: `installed ${path.relative(repo.root, res.hook.file)}`,
@@ -278,7 +293,7 @@ const commands = {
       `tokentaby set up in ${repo.root}`,
       res.created.length ? res.created.map((f) => `  + ${f}`).join('\n') : '  (all files already existed)',
       `  git hook: ${hookMsg}`,
-      dev ? `  your usage is logged as "${dev}" (the dev_id you chose)` : '  you have not chosen a developer id yet: set dev_id in /plugin → tokentaby to start logging',
+      dev ? `  your usage is logged as "${dev}" (the dev_id you chose)` : '  you have not chosen a developer id yet: set dev_id in /plugin → tokentaby (or run tokentaby init --dev <id>) to start logging',
       '',
       'Import your past sessions in this repo: /tokentaby:backfill',
       'Next: commit .tokentaby/ so the whole team starts tracking:',
@@ -415,6 +430,49 @@ const commands = {
       `${a.dryRun ? 'Would import' : 'Imported'} ${r.imported} of ${r.records} api_request records as ${r.rows} turn rows for ${dev}.\n` +
         `Skipped: ${r.inTranscript} already in transcripts, ${r.duplicate} imported before, ${r.unknownSession} from sessions outside this repo` +
         `${r.unknownSession ? ' (--all-sessions to include)' : ''}, ${r.otherDev} from other developers.`
+    );
+  },
+
+  import(a) {
+    const repo = needRepo(a);
+    if (a.since && !/^\d{4}-\d{2}-\d{2}$/.test(a.since)) throw new UsageError('--since must be YYYY-MM-DD');
+    const state = store.readState(repo);
+    const cfg = resolveConfig(repo.root, state.options);
+    const dev = typeof a.dev === 'string' ? store.sanitizeDev(a.dev) : store.devIdFor(cfg, state);
+    if (!dev) throw new UsageError('no developer id: run tokentaby init --dev <id>, set dev_id in /plugin → tokentaby, or pass --dev ID');
+    if (typeof a.cursorCsv === 'string') {
+      const r = importer.importCursorCsv({ repo, dev, cfg, state, pricing: loadPricing(repo.root) }, a.cursorCsv, { dryRun: !!a.dryRun });
+      if (a.json) return print(r);
+      return print(
+        `${a.dryRun ? 'Would import' : 'Imported'} ${r.imported} of ${r.rows} Cursor requests for ${dev}` +
+          (a.dryRun ? '' : ` as ${r.turnRows} turn rows (one per day and model)`) +
+          `${r.duplicate ? `; ${r.duplicate} already imported` : ''}.\nThe export has no repo per request: all of it is logged to ${path.basename(repo.root)}.`
+      );
+    }
+    const tools = typeof a.tool === 'string' ? a.tool.split(',').map((x) => x.trim()).filter(Boolean) : null;
+    const r = importer.importUsage({ repo, dev, cfg, state, pricing: loadPricing(repo.root) }, { tools, since: a.since, dryRun: !!a.dryRun });
+    if (a.json) return print(r);
+    const rows = Object.entries(r.tools);
+    const lines = rows.length
+      ? rows.map(([t, x]) => `  ${toolName(t).padEnd(20)} ${x.sessions} session${x.sessions === 1 ? '' : 's'}` + (a.dryRun ? '' : ` · ${x.turnRows} turn rows · ${x.prompts} prompts`))
+      : ['  nothing new from other tools in this repo'];
+    print(
+      [`${a.dryRun ? 'Would import' : 'Imported'} for ${dev} in ${repo.root}:`, ...lines, ...r.errors.map((e) => `  ! ${e}`)].join('\n') +
+        (a.dryRun || !rows.length ? '' : '\nThe events are queued; they ship with your next commit (or tokentaby sync).')
+    );
+  },
+
+  tools(a) {
+    const found = importer.detect();
+    if (a.json) return print(found);
+    print(
+      [
+        'Coding agents tokentaby can log, and whether their data is on this machine:',
+        `  ${'Claude Code'.padEnd(34)} live, through the plugin's hooks`,
+        ...found.map((t) => `  ${t.tools.join(' / ').padEnd(34)} ${t.available ? 'found' : 'not found'}  ${t.where}`),
+        '',
+        'Run tokentaby import --dry-run in a repo to see which sessions belong to it.',
+      ].join('\n')
     );
   },
 

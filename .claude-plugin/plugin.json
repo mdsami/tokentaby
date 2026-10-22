@@ -1,7 +1,7 @@
 {
   "name": "tokentaby",
   "version": "0.1.3",
-  "description": "Per-repo, per-developer Claude Code usage tracking — tokens, models, agents, tasks, prompts and estimated (API-equivalent) cost — committed to git, with a local team dashboard.",
+  "description": "Per-repo, per-developer usage tracking for Claude Code and other AI coding agents (Codex, OpenCode, Gemini CLI, Qwen Code, Copilot CLI, Kimi Code, Hermes, Cursor) — tokens, models, agents, tasks, prompts and estimated (API-equivalent) cost — committed to git, with a local team dashboard.",
   "author": {
     "name": "mdsami"
   },

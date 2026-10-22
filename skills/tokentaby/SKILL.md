@@ -1,12 +1,12 @@
 ---
 name: tokentaby
-description: Answer questions about this repo's Claude Code usage and estimated cost from tokentaby's logs — e.g. "what did TKT-142 cost?", "who used the most Opus this week?", "how much do subagents add?", "which tasks were cheapest?", "what has the team been asking Claude?".
+description: Answer questions about this repo's AI coding agent usage and estimated cost from tokentaby's logs (Claude Code, Codex, OpenCode, Gemini CLI, Qwen Code, Copilot CLI, Kimi Code, Hermes Agent, Cursor) — e.g. "what did TKT-142 cost?", "who used the most Opus this week?", "how much did we spend in Codex vs Claude Code?", "how much do subagents add?", "what has the team been asking Claude?".
 allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/tokentaby.js" query:*)
 ---
 
 # Usage analysis with tokentaby
 
-tokentaby logs every Claude Code turn in this repo (tokens, model, agent, task, branch, estimated cost) to `.tokentaby/devs/<dev>/<YYYY-MM>.ndjson`, committed to git, so a pulled clone holds the whole team's usage. Query it with the bundled CLI — it prints JSON:
+tokentaby logs every Claude Code turn in this repo (tokens, model, agent, task, branch, estimated cost) to `.tokentaby/devs/<dev>/<YYYY-MM>.ndjson`, plus the sessions developers ran here in other coding agents (each event's `tool`: `claude-code`, `codex-app`, `codex-cli`, `opencode`, `gemini-cli`, `qwen-code`, `copilot-cli`, `kimi-code`, `hermes-agent`, `cursor`), committed to git, so a pulled clone holds the whole team's usage. Query it with the bundled CLI — it prints JSON:
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/scripts/tokentaby.js" query <view> [filters]
@@ -14,7 +14,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/tokentaby.js" query <view> [filters]
 
 | view | answers |
 |---|---|
-| `summary` | totals for a range, previous-period comparison, daily series, model / agent share, top devs and tasks |
+| `summary` | totals for a range, previous-period comparison, daily series, model / agent / tool share (`byTool`), top devs and tasks |
 | `periods` | today / this week / this month, the current dev vs the team |
 | `devs` | per developer: sessions, prompts, tokens by type, cost, favourite model, subagent share |
 | `dev <id>` | one developer: timeline, model mix, tasks, recent prompts |
@@ -24,13 +24,14 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/tokentaby.js" query <view> [filters]
 | `prompts` | the prompt log (respects the repo's prompt mode); `--q TEXT` searches text, task id or hash |
 | `events` | raw events, for anything the views do not cover |
 
-Filters: `--from YYYY-MM-DD --to YYYY-MM-DD --dev ID --model ID --task ID --agent TYPE --branch NAME --q TEXT`. Add `--prices current` to re-cost history with today's pricing table instead of the price logged at the time. `summary` defaults to the current month; most other views default to all time — pass a range when the question names one.
+Filters: `--from YYYY-MM-DD --to YYYY-MM-DD --dev ID --tool ID --model ID --task ID --agent TYPE --branch NAME --q TEXT`. Add `--prices current` to re-cost history with today's pricing table instead of the price logged at the time. `summary` defaults to the current month; most other views default to all time — pass a range when the question names one.
 
 Examples:
 
 - "What did TKT-142 cost?" → `query tasks --task TKT-142`
 - "Who used the most Opus this week?" → `query devs --model claude-opus-5-5 --from <monday> --to <today>`
 - "How much do subagents add?" → `query agents`
+- "Codex vs Claude Code this month?" → `query summary` and read `byTool`; one tool only → `query summary --tool codex-cli`
 
 ## How to answer
 

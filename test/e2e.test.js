@@ -29,6 +29,8 @@ const env = {
   HOME: tmp, // keep the developer's global git config and hooks out of the test
 };
 for (const k of Object.keys(env)) if (k.startsWith('CLAUDE_PLUGIN_OPTION_') || k.startsWith('TOKENTABY_')) delete env[k];
+// other agents' stores resolve under HOME=tmp, i.e. empty
+for (const k of ['CODEX_HOME', 'XDG_DATA_HOME', 'GEMINI_CLI_HOME', 'QWEN_HOME', 'QWEN_RUNTIME_DIR', 'COPILOT_HOME', 'KIMI_CODE_HOME', 'HERMES_HOME', 'ANTIGRAVITY_GEMINI_DIR', 'ANTIGRAVITY_STATE_DB']) delete env[k];
 // the dev_id the developer chose at install (tokentaby never reads git user.email)
 env.CLAUDE_PLUGIN_OPTION_DEV_ID = 'sami';
 

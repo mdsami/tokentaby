@@ -320,6 +320,8 @@ function onPreCompact(ctx) {
 function onSessionEnd(ctx) {
   processMain(ctx);
   processSubagents(ctx);
+  // pick up what Codex, OpenCode, Gemini CLI, … logged in this repo since the last run
+  debug('import', require('../lib/importer').autoImport(ctx.repo, { dev: ctx.dev }));
   store.appendEvents(ctx.repo, [
     { t: 'session', ts: ctx.now, dev: ctx.dev, session: ctx.session, event: 'end', reason: ctx.p.reason || null },
   ]);

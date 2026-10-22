@@ -265,7 +265,7 @@ tbody tr:hover { background: var(--hover); }
   // ------------------------------------------------------------ state
   const S = {
     meta: null,
-    filters: Object.assign({ range: 'month', from: '', to: '', dev: '', model: '', prices: 'logged' }, store.get('filters', {})),
+    filters: Object.assign({ range: 'month', from: '', to: '', dev: '', tool: '', model: '', prices: 'logged' }, store.get('filters', {})),
     currency: store.get('currency', null),
     colors: new Map(),
   };
@@ -293,6 +293,7 @@ tbody tr:hover { background: var(--hover); }
     const r = range();
     const p = { from: r.from, to: r.to };
     if (S.filters.dev) p.dev = S.filters.dev;
+    if (S.filters.tool) p.tool = S.filters.tool;
     if (S.filters.model) p.model = S.filters.model;
     if (S.filters.prices === 'current') p.prices = 'current';
     return Object.assign(p, extra || {});
@@ -364,6 +365,7 @@ tbody tr:hover { background: var(--hover); }
     },
     model: (m) => String(m || '').replace(/^claude-/, ''),
     agent: (t) => (t === 'main' ? 'main agent' : t),
+    tool: (t) => ((S.meta && S.meta.toolNames) || {})[t] || t,
   };
 
   // ------------------------------------------------------------ colors (follow the entity, never its rank)
@@ -801,7 +803,7 @@ tbody tr:hover { background: var(--hover); }
 
   function emptyState() {
     return h('div', { class: 'card empty' }, h('h2', { text: 'No usage logged yet' }),
-      h('p', {}, 'Data appears after the first Claude Code turn in this repo. Teammates\' usage arrives with ', h('span', { class: 'mono', text: 'git pull' }), '.'),
+      h('p', {}, 'Data appears after the first Claude Code turn in this repo, or after ', h('span', { class: 'mono', text: 'tokentaby import' }), ' picks up Codex, OpenCode, Gemini CLI, Qwen Code or Copilot CLI sessions. Teammates\' usage arrives with ', h('span', { class: 'mono', text: 'git pull' }), '.'),
       h('p', { class: 'muted' }, 'Not set up? Run ', h('span', { class: 'mono', text: '/tokentaby:init' }), ' in Claude Code, then commit ', h('span', { class: 'mono', text: '.tokentaby/' }), '.'));
   }
 
@@ -855,7 +857,12 @@ tbody tr:hover { background: var(--hover); }
           draw: (host) => rhythm(host, pulse.rhythm),
           table: () => rhythmTable(pulse.rhythm),
         }));
-      const agents = h('div', { class: 'grid', style: 'margin-top:12px' }, chartCard({
+      const byTool = sum.byTool.length > 1 ? chartCard({
+          title: 'By tool', hint: 'Claude Code, Codex, OpenCode, Gemini CLI, … by estimated cost',
+          draw: (host) => barList(host, { items: sum.byTool.map((x) => ({ label: fmt.tool(x.tool), v: x.usd, extra: `${fmt.pct(t.usd ? x.usd / t.usd : 0)} · ${x.devs} ${x.devs === 1 ? 'dev' : 'devs'}` })) }),
+          table: () => dataTable({ columns: [{ key: 'tool', label: 'Tool', fmt: (r) => fmt.tool(r.tool) }, { key: 'usd', label: 'Est. cost', num: true, fmt: (r) => fmt.money(r.usd) }, { key: 'tokens', label: 'Tokens', num: true, fmt: (r) => fmt.tokens(r.tokens) }, { key: 'turns', label: 'Turns', num: true, fmt: (r) => fmt.int(r.turns) }, { key: 'devs', label: 'Developers', num: true }], rows: sum.byTool }),
+        }) : null;
+      const agents = h('div', { class: 'grid', style: 'margin-top:12px' }, byTool, chartCard({
         title: 'Agent share', hint: 'main agent vs subagent types, by estimated cost',
         draw: (host) => barList(host, { items: sum.byAgent.map((a) => ({ label: fmt.agent(a.type), v: a.usd, extra: fmt.pct(t.usd ? a.usd / t.usd : 0) })) }),
         table: () => dataTable({ columns: [{ key: 'type', label: 'Agent', fmt: (r) => fmt.agent(r.type) }, { key: 'usd', label: 'Est. cost', num: true, fmt: (r) => fmt.money(r.usd) }, { key: 'tokens', label: 'Tokens', num: true, fmt: (r) => fmt.tokens(r.tokens) }], rows: sum.byAgent }),
@@ -1129,6 +1136,7 @@ tbody tr:hover { background: var(--hover); }
       return h('div', { class: 'session' },
         h('div', { class: 'session-head' },
           h('span', { text: fmt.when(first.ts) }), h('a', { href: devLink(first.dev), text: first.name || first.dev }),
+          first.tool && first.tool !== 'claude-code' ? h('span', { class: 'chip', text: fmt.tool(first.tool) }) : null,
           first.task ? h('span', { class: 'chip', text: first.task }) : null,
           models.length ? h('span', { text: models.join(', ') }) : null,
           first.session ? h('span', { class: 'mono', text: first.session.slice(0, 8) }) : null),
@@ -1193,12 +1201,14 @@ tbody tr:hover { background: var(--hover); }
     const sel = (label, value, options, onchange) => h('label', {}, label, h('select', { onchange: (e) => onchange(e.target.value) }, options.map(([v, l]) => h('option', { value: v, selected: v === value ? true : null }, l))));
     const devs = [['', 'All developers'], ...S.meta.devs.map((d) => [d.id, d.name])];
     const models = [['', 'All models'], ...S.meta.models.map((m) => [m, fmt.model(m)])];
+    const tools = [['', 'All tools'], ...(S.meta.tools || []).map((t) => [t, fmt.tool(t)])];
     const ranges = [['month', 'This month'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['90d', 'Last 90 days'], ['all', 'All time'], ['custom', 'Custom…']];
     const kids = [
       sel('Range', f.range, ranges, (v) => { f.range = v; save(); }),
       f.range === 'custom' ? h('input', { type: 'date', value: range().from, 'aria-label': 'From', onchange: (e) => { f.from = e.target.value; save(); } }) : null,
       f.range === 'custom' ? h('input', { type: 'date', value: range().to, 'aria-label': 'To', onchange: (e) => { f.to = e.target.value; save(); } }) : null,
       sel('Developer', f.dev, devs, (v) => { f.dev = v; save(); }),
+      tools.length > 2 || f.tool ? sel('Tool', f.tool, tools, (v) => { f.tool = v; save(); }) : null,
       sel('Model', f.model, models, (v) => { f.model = v; save(); }),
       sel('Prices', f.prices, [['logged', 'as logged'], ['current', 'current table']], (v) => { f.prices = v; save(); }),
       currencies().length > 1 ? sel('Currency', currency(), currencies().map((c) => [c, c]), (v) => { S.currency = v; store.set('currency', v); render(); }) : null,
